@@ -33,11 +33,13 @@ val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bun
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
 val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets") {
+    onlyIf { runtimeBundleDir.asFile.exists() && runtimeBundleDir.file("pocketdev-agy-arm64-2026.09.1.tar.zst").asFile.exists() }
     from(runtimeBundleDir.file("pocketdev-agy-arm64-2026.09.1.tar.zst"))
     into(generatedRuntimeAssets.map { it.dir("shared/runtime") })
 }
 
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
+    onlyIf { runtimeBundleDir.asFile.exists() && runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst").asFile.exists() }
     from(
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
         runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
@@ -54,11 +56,14 @@ fun buildConfigString(value: String): String =
 android {
     namespace = "com.jarves.mh"
     compileSdk = 36
-    // F-Droid's r26b recipe installs 26.1.10909125. Keep AGP from selecting
-    // its newer default NDK; local developers may override this explicitly.
-    ndkVersion = providers.gradleProperty("mhNdkVersion").orNull ?: "26.1.10909125"
 
     signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (hasUploadSigning) {
             create("upload") {
                 storeFile = rootProject.file(checkNotNull(uploadStorePath))
@@ -72,11 +77,7 @@ android {
     defaultConfig {
         applicationId = "com.jarves.mh"
         minSdk = 28
-        // The direct APK retains the proven target-28 PRoot execution path. The
-        // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
-        // Keep literal defaults so F-Droid's static manifest parser can detect
-        // the tagged release. Gradle properties may still override Play builds.
         versionCode = 5
         versionName = "1.0.4"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
@@ -89,6 +90,10 @@ android {
 
         buildConfigField("boolean", "IS_PLAY_BUILD", playBuild.toString())
         buildConfigField("String", "PRIVACY_POLICY_URL", buildConfigString(privacyPolicyUrl))
+        buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "false")
+        buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
+        buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
+        buildConfigField("String", "APP_VARIANT", "\"online\"")
 
         buildConfigField(
             "String",
@@ -97,29 +102,11 @@ android {
         )
     }
 
-    flavorDimensions += "runtimeDelivery"
-    productFlavors {
-        create("online") {
-            dimension = "runtimeDelivery"
-            buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "false")
-            buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
-            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
-            buildConfigField("String", "APP_VARIANT", "\"online\"")
-        }
-        create("offline") {
-            dimension = "runtimeDelivery"
-            buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "true")
-            buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
-            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
-            buildConfigField("String", "APP_VARIANT", "\"offline\"")
-        }
-    }
-
-    sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
     sourceSets.getByName("main").assets.srcDir(generatedRuntimeAssets.map { it.dir("shared") })
 
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("debugConfig")
             buildConfigField(
                 "String",
                 "TEST_OPENROUTER_API_KEY",
@@ -146,12 +133,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true

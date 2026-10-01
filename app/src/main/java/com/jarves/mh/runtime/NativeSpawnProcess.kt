@@ -93,12 +93,42 @@ internal class NativeSpawnProcess private constructor(
 
 private object NativeSpawn {
     const val STILL_RUNNING = -2
+    var isLoaded = false
 
     init {
-        System.loadLibrary("pocketspawn")
+        runCatching {
+            System.loadLibrary("pocketspawn")
+            isLoaded = true
+        }
     }
 
-    external fun spawn(
+    fun spawn(
+        argv: Array<String>,
+        environment: Array<String>,
+        cwd: String,
+        outputFile: String,
+        pseudoTerminal: Boolean,
+        ptyRows: Int,
+        ptyColumns: Int,
+    ): IntArray {
+        if (!isLoaded) return intArrayOf(-1, -1, -1)
+        return runCatching {
+            spawnNative(argv, environment, cwd, outputFile, pseudoTerminal, ptyRows, ptyColumns)
+        }.getOrDefault(intArrayOf(-1, -1, -1))
+    }
+
+    fun waitFor(pid: Int, noHang: Boolean): Int {
+        if (!isLoaded || pid <= 0) return -1
+        return runCatching { waitForNative(pid, noHang) }.getOrDefault(-1)
+    }
+
+    fun kill(pid: Int, signal: Int): Int {
+        if (!isLoaded || pid <= 0) return -1
+        return runCatching { killNative(pid, signal) }.getOrDefault(-1)
+    }
+
+    @JvmStatic
+    private external fun spawnNative(
         argv: Array<String>,
         environment: Array<String>,
         cwd: String,
@@ -107,6 +137,10 @@ private object NativeSpawn {
         ptyRows: Int,
         ptyColumns: Int,
     ): IntArray
-    external fun waitFor(pid: Int, noHang: Boolean): Int
-    external fun kill(pid: Int, signal: Int): Int
+
+    @JvmStatic
+    private external fun waitForNative(pid: Int, noHang: Boolean): Int
+
+    @JvmStatic
+    private external fun killNative(pid: Int, signal: Int): Int
 }
